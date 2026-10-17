@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: 2026 aerynOS Developers
+# SPDX-License-Identifier: MPL-2.0
+
+name        : oo7
+version     : "0.7.0.beta"
+release     : 1
+homepage    : https://github.com/linux-credentials/oo7
+upstreams   :
+    - https://github.com/linux-credentials/oo7/archive/refs/tags/0.7.0.beta.tar.gz : b5bc59a755936fcc87de140e6210885c7e432f68fc0e60369457fde12d021ae1
+summary     : Secret service provider replacing libsecret and implementing secret service API.
+description : |
+    James Bond went on a new mission as a Secret Service provider.
+    A user-daemon server, implementing the secret service API
+    for (separate packages) xdg-portals, git-credential, cargo-credential, any other usage, supporting PAM auto-unlock at login.
+    Supports modern authentication methods like systemd-creds, FIDO, TPM, etc...
+license     :
+    - MIT
+networking  : true
+builddeps   :
+    - binary(desktop-file-validate)
+    - binary(meson)
+    - pkgconfig(pam)
+    - pkgconfig(systemd)
+    - python-maturin
+rundeps     :
+    - dbus
+setup       : |
+    %cargo_fetch
+    %cargo_set_environment
+    %install_dir target
+    for subdir in server pam portal; do
+      pushd $subdir
+      %meson
+      # To share build artefacts
+      rmdir "%(builddir)/src"
+      ln -sr ../target "%(builddir)/src"
+      popd
+    done
+build       : |
+    %cargo_set_environment
+    for subdir in server pam portal; do
+      pushd $subdir
+      %meson_build
+      popd
+    done
+
+    for bin in oo7-cli cargo-credential-oo7 git-credential-oo7; do
+      %cargo_build --package $bin
+    done
+
+    export MATURIN_PEP517_ARGS="--target %(target_triple)"
+    %pyproject_build python
+install     : |
+    for subdir in server pam portal; do
+      pushd $subdir
+      %meson_install
+      popd
+    done
+
+    for bin in oo7-cli cargo-credential-oo7 git-credential-oo7; do
+      %install_bin %(cargo_target_dir)/$bin
+    done
+
+    pushd python
+    %pyproject_install
+    popd
+    # Allows oo7 to avoid swapping secrets to swap
+    # setcap cap_ipc_lock=+ep "%(installroot)%(libexecdir)/oo7-daemon"
+#check       : |
+#    desktop-file-validate %(installroot)%(datadir)/applications/oo7-portal.desktop
+#    %cargo_test
+packages    :
+    - "%(name)-portal":
+       summary     : XDG portal for secrets by oo7
+       rundeps     :
+          - oo7
+          - xdg-desktop-portal
+       paths        :
+          - /usr/lib/oo7/oo7-portal
+          - /usr/share/applications/oo7-portal.desktop
+          - /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.oo7.service
+          - /usr/share/xdg-desktop-portal/portals/oo7-portal.portal
+          - /usr/lib/systemd/user/dbus-org.freedesktop.impl.portal.desktop.oo7.service
+          - /usr/lib/systemd/user/oo7-portal.service
+    - "%(name)-pam":
+        summary     : PAM module for login-time auto-unlock
+        description : |
+          Unlocks the oo7 keyring during login through PAM. Alternative to manual unlocking and systemd-creds
+        rundeps      :
+          - soname(libpam.so.0(x86_64))
+          - oo7
+        paths       :
+          - /usr/lib/security/pam_oo7.so
+    - "cargo-credential-%(name)":
+         summary : Cargo credential provider using oo7
+         paths   :
+          - /usr/bin/cargo-credential-oo7
+    - "git-credential-%(name)":
+         summary : Git credential provider using oo7
+         paths   :
+           - /usr/bin/git-credential-oo7
+    - "%(name)-kwallet":
+         summary     : Migration from kwallet to oo7
+         description : |
+             A command to migrate all stored info from kwallet's wallet to oo7 secret service. Read-only support; DOES NOT replace any component of kwallet.
+         paths       :
+           -  /usr/bin/kwallet-cli
+    - "%(name)-python":
+       summary : Python bindings for oo7
+       rundeps :
+         - oo7
+       paths   :
+         - /usr/lib/python3.14/site-packages/oo7.pyi
+         - /usr/lib/python3.14/site-packages/oo7/
+         - /usr/lib/python3.14/site-packages/oo7_python-0.6.0.dist-into/
